@@ -1,166 +1,107 @@
-import streamlit as st
-import sqlite3
-import pandas as pd
-from transformers import pipeline
-from datetime import datetime
+from flask import Flask, request, jsonify
+from bson import ObjectId
+from db import users_collection, chat_collection, assessment_collection, alerts_collection
 
-# ---------------- PAGE CONFIG ----------------
-st.set_page_config(
-    page_title="Workplace Mental Health Intelligence Platform",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+app = Flask(__name__)
 
-# ---------------- CUSTOM LIGHT STYLING ----------------
-st.markdown("""
-    <style>
-        body {background-color: #f5f7fa;}
-        .stApp {background-color: #f5f7fa;}
-        h1, h2, h3 {color: #1f2d3d;}
-        .stMetric {background-color: white; padding: 10px; border-radius: 8px;}
-    </style>
-""", unsafe_allow_html=True)
+# ------------------ HOME ROUTE ------------------
+@app.route("/")
+def home():
+    return "Mental Health AI Backend Running 🚀"
 
-# ---------------- DATABASE ----------------
-conn = sqlite3.connect("mental_health.db", check_same_thread=False)
-c = conn.cursor()
-c.execute("""
-CREATE TABLE IF NOT EXISTS logs (
-    time TEXT,
-    emotion TEXT,
-    confidence REAL,
-    stress INTEGER
-)
-""")
-conn.commit()
 
-# ---------------- AI MODEL ----------------
-@st.cache_resource
-def load_emotion_model():
-    return pipeline("text-classification",
-                    model="bhadresh-savani/distilbert-base-uncased-emotion")
+# ------------------ USER REGISTRATION ------------------
+@app.route("/register", methods=["POST"])
+def register_user():
+    data = request.json
 
-emotion_model = load_emotion_model()
-
-# ---------------- LOGIC ----------------
-def calculate_stress(emotion):
-    stress_map = {
-        "sadness": 75,
-        "anger": 85,
-        "fear": 80,
-        "joy": 20,
-        "love": 25,
-        "surprise": 40
+    user = {
+        "fullName": data.get("fullName"),
+        "email": data.get("email"),
+        "age": data.get("age"),
+        "gender": data.get("gender"),
+        "profession": data.get("profession"),
+        "workMode": data.get("workMode"),
+        "stressLevel": data.get("stressLevel"),
+        "sleepHours": data.get("sleepHours")
     }
-    return stress_map.get(emotion.lower(), 50)
 
-def detect_work_pressure(text):
-    text = text.lower()
-    if any(word in text for word in ["deadline", "target", "urgent"]):
-        return "Deadline Pressure"
-    if any(word in text for word in ["meeting", "call", "discussion"]):
-        return "Meeting Fatigue"
-    if any(word in text for word in ["busy", "workload", "tasks"]):
-        return "Workload Overload"
-    return "No Major Work Pressure"
+    result = users_collection.insert_one(user)
 
-def burnout_prediction():
-    recent_data = pd.read_sql("SELECT stress FROM logs ORDER BY time DESC LIMIT 5", conn)
-    if len(recent_data) < 3:
-        return "Low"
-    avg_stress = recent_data["stress"].mean()
-    if avg_stress > 70:
-        return "High"
-    elif avg_stress > 50:
-        return "Moderate"
-    return "Low"
+    return jsonify({
+        "message": "User Registered Successfully",
+        "user_id": str(result.inserted_id)
+    })
 
-# ---------------- SIDEBAR ----------------
-st.sidebar.title("Mental Health Intelligence System")
-page = st.sidebar.radio("Navigation", ["Home", "AI Assessment", "Analytics Dashboard", "About"])
 
-# =====================================================
-# HOME PAGE
-# =====================================================
-if page == "Home":
-    st.title("Workplace Mental Health Intelligence Platform")
-    st.write("""
-    This platform uses Natural Language Processing to assess workplace emotional states,
-    quantify stress levels, and provide predictive mental wellness insights.
-    """)
+# ------------------ SAVE CHAT MESSAGE ------------------
+@app.route("/chat", methods=["POST"])
+def save_chat():
+    data = request.json
 
-    st.subheader("System Capabilities")
-    st.markdown("""
-    - Emotion Detection using AI  
-    - Professional Stress Quantification  
-    - Burnout Risk Prediction  
-    - Workplace Pressure Analysis  
-    - Emotional Trend Analytics  
-    """)
+    chat = {
+        "userId": ObjectId(data.get("userId")),
+        "message": data.get("message")
+    }
 
-# =====================================================
-# AI ASSESSMENT PAGE
-# =====================================================
-elif page == "AI Assessment":
-    st.title("AI-Based Emotional Assessment")
+    chat_collection.insert_one(chat)
 
-    user_input = st.text_input("Describe how you are feeling about your work today:")
+    return jsonify({"message": "Chat Saved"})
 
-    if user_input:
-        result = emotion_model(user_input)[0]
-        emotion = result["label"]
-        confidence = round(result["score"] * 100, 2)
-        stress = calculate_stress(emotion)
-        pressure = detect_work_pressure(user_input)
-        burnout = burnout_prediction()
 
-        st.subheader("Analysis Result")
+# ------------------ RISK DETECTION FUNCTION ------------------
+def check_user_risk(user_id):
+    user = users_collection.find_one({"_id": ObjectId(user_id)})
+    assessment = assessment_collection.find_one()
 
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Detected Emotion", emotion)
-        col2.metric("AI Confidence (%)", confidence)
-        col3.metric("Stress Score", f"{stress}/100")
+    if not user or not assessment:
+        return "No data"
 
-        st.write("Burnout Risk Level:", burnout)
-        st.write("Workplace Pressure Insight:", pressure)
+    risk_score = 0
+    reasons = []
 
-        c.execute("INSERT INTO logs VALUES (?,?,?,?)",
-                  (datetime.now(), emotion, confidence, stress))
-        conn.commit()
+    if assessment.get("StressScore", 0) >= 8:
+        risk_score += 1
+        reasons.append("High Stress")
 
-# =====================================================
-# ANALYTICS DASHBOARD
-# =====================================================
-elif page == "Analytics Dashboard":
-    st.title("Emotional Analytics Dashboard")
-    data = pd.read_sql("SELECT * FROM logs", conn)
+    if user.get("sleepHours", 8) < 6:
+        risk_score += 1
+        reasons.append("Low Sleep")
 
-    if not data.empty:
-        col1, col2 = st.columns(2)
+    if assessment.get("BurnoutRisk", "") == "High":
+        risk_score += 1
+        reasons.append("Burnout Risk")
 
-        with col1:
-            st.subheader("Stress Trend Over Time")
-            st.line_chart(data["stress"])
+    if risk_score >= 2:
+        alert = {
+            "userId": ObjectId(user_id),
+            "riskLevel": "High",
+            "reason": ", ".join(reasons)
+        }
+        alerts_collection.insert_one(alert)
+        return "🚨 ALERT GENERATED"
 
-        with col2:
-            st.subheader("Emotion Distribution")
-            st.bar_chart(data["emotion"].value_counts())
-    else:
-        st.info("No data available. Complete assessments to generate analytics.")
+    return "User Stable"
 
-# =====================================================
-# ABOUT PAGE
-# =====================================================
-elif page == "About":
-    st.title("About This Project")
-    st.write("""
-    This system is an AI-driven workplace mental health analytics platform designed to:
-    
-    - Monitor emotional patterns  
-    - Quantify stress levels  
-    - Predict burnout risk  
-    - Provide workplace-related mental insights  
-    
-    The platform integrates Natural Language Processing, predictive analytics,
-    and visualization tools for mental wellness intelligence.
-    """)
+
+# ------------------ ANALYZE USER ------------------
+@app.route("/analyze/<user_id>", methods=["GET"])
+def analyze_user(user_id):
+    result = check_user_risk(user_id)
+    return jsonify({"status": result})
+
+
+# ------------------ VIEW ALERTS ------------------
+@app.route("/alerts/<user_id>", methods=["GET"])
+def get_alerts(user_id):
+    alerts = list(alerts_collection.find({"userId": ObjectId(user_id)}))
+    for alert in alerts:
+        alert["_id"] = str(alert["_id"])
+        alert["userId"] = str(alert["userId"])
+
+    return jsonify(alerts)
+
+
+# ------------------ RUN SERVER ------------------
+if __name__ == "__main__":
+    app.run(debug=True)

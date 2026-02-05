@@ -1,0 +1,28 @@
+{
+  "name": "ai-based-mental-health-for-working-professionals",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pranali31328/AI-based-mental-health-for-working-professionals.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Pranali31328/AI-based-mental-health-for-working-professionals/issues"
+  },
+  "homepage": "https://github.com/Pranali31328/AI-based-mental-health-for-working-professionals#readme",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "mongoose": "^9.1.6",
+    "xlsx": "^0.18.5"
+  }
+}
